@@ -22,8 +22,10 @@ MENU_ITEMS=(
     "Кэш браузера Zen"
     "Журналы systemd (старше 7 дней)"
 )
-STATES=(0 0 0 0 0)   # 0 = не выбрано, 1 = выбрано
-SELECTED=0           # текущая позиция курсора
+STATES=(0 0 0 0 0)
+SELECTED=0
+ALL_INDEX=${#MENU_ITEMS[@]}
+ROW_COUNT=$(( ${#MENU_ITEMS[@]} + 1 ))
 
 # ── Логотип ────────────────────────────────────────────
 show_logo() {
@@ -60,7 +62,7 @@ task_update() {
     log_section "Обновление системы"
 
     local path="$HOME"
-    local required_kb=$((6 * 1024 * 1024))   # 6 ГиБ в КиБ
+    local required_kb=$((6 * 1024 * 1024))
     local disk_info available_kb available_gib
 
     if ! disk_info=$(df -Pk -- "$path"); then
@@ -235,6 +237,30 @@ run_task() {
 #  TUI-МЕНЮ
 # ══════════════════════════════════════════════════════
 
+all_on() {
+    local i
+    for i in "${!STATES[@]}"; do
+        ((STATES[i] == 0)) && return 1
+    done
+    return 0
+}
+
+reset_states() {
+    local i
+    for i in "${!STATES[@]}"; do
+        STATES[i]=0
+    done
+}
+
+toggle_all() {
+    local new=1
+    all_on && new=0
+    local i
+    for i in "${!STATES[@]}"; do
+        STATES[i]=$new
+    done
+}
+
 draw_menu() {
     clear
     show_logo
@@ -258,27 +284,32 @@ draw_menu() {
             echo -e "   ${box} ${MENU_ITEMS[i]}"
         fi
     done
+
+    echo -e "   ${DIM}─────────────────────────────────${RESET}"
+
+    local all_box="[ ]"
+    all_on && all_box="[${GREEN}✔${RESET}]"
+
+    if ((SELECTED == ALL_INDEX)); then
+        echo -e " ${CYAN}❯${RESET} ${all_box} ${BOLD}Всё сразу${RESET}"
+    else
+        echo -e "   ${all_box} Всё сразу"
+    fi
     echo
 }
 
 read_key() {
-    local key seq
+    # Bash использует динамическую область видимости: key принадлежит menu.
+    local seq
     IFS= read -rsn1 key 2>/dev/null || true
     if [[ "$key" == $'\x1b' ]]; then
         IFS= read -rsn2 -t 0.05 seq 2>/dev/null || true
         key+="$seq"
     fi
-    printf '%s' "$key"
-}
 
-toggle_all() {
-    local i all_on=1
-    for i in "${!STATES[@]}"; do
-        ((STATES[i] == 0)) && { all_on=0; break; }
-    done
-    local new=$(( all_on ? 0 : 1 ))
-    for i in "${!STATES[@]}"; do
-        STATES[i]=$new
+    # Подстановка команд в исходнике удаляла завершающие символы LF.
+    while [[ "$key" == *$'\n' ]]; do
+        key=${key%$'\n'}
     done
 }
 
@@ -288,7 +319,7 @@ run_selected() {
         ((STATES[i])) && { any=1; break; }
     done
 
-    tput cnorm 2>/dev/null || true   # вернуть курсор на время выполнения
+    tput cnorm 2>/dev/null || true
     clear
     show_logo
 
@@ -314,6 +345,8 @@ run_selected() {
         echo -e "${GREEN}${BOLD} Готово!${RESET} Освобождено: ${BOLD}${freed:-?} МиБ${RESET}"
         echo -e "${DIM} Рекомендуется перезагрузка.${RESET}"
         echo -e "${GREEN}${BOLD}══════════════════════════════════════${RESET}"
+
+        reset_states
     fi
 
     pause
@@ -321,23 +354,27 @@ run_selected() {
 }
 
 menu() {
-    tput civis 2>/dev/null || true   # спрятать курсор
+    tput civis 2>/dev/null || true
 
     while true; do
         draw_menu
 
         local key
-        key=$(read_key)
+        read_key
 
         case "$key" in
-            $'\x1b[A'|k) ((SELECTED = (SELECTED - 1 + ${#MENU_ITEMS[@]}) % ${#MENU_ITEMS[@]})) ;;
-            $'\x1b[B'|j) ((SELECTED = (SELECTED + 1) % ${#MENU_ITEMS[@]})) ;;
+            $'\x1b[A'|k) ((SELECTED = (SELECTED - 1 + ROW_COUNT) % ROW_COUNT)) ;;
+            $'\x1b[B'|j) ((SELECTED = (SELECTED + 1) % ROW_COUNT)) ;;
             ' ')
-                ((STATES[SELECTED])) && STATES[SELECTED]=0 || STATES[SELECTED]=1
+                if ((SELECTED == ALL_INDEX)); then
+                    toggle_all
+                else
+                    ((STATES[SELECTED])) && STATES[SELECTED]=0 || STATES[SELECTED]=1
+                fi
                 ;;
             a|A|ф|Ф) toggle_all ;;
             q|Q|й|Й|$'\x1b') return 1 ;;
-            "") run_selected ;;   # Enter
+            "") run_selected ;;
         esac
     done
 }
